@@ -22,6 +22,9 @@
          box-shadow:0 0 24px #2d6cdf99; }
   #orb.on { animation: pulse 1s infinite; background: radial-gradient(circle at 30% 30%, #ff9a9a, #e03a3a 60%, #7a1414); box-shadow:0 0 30px #e03a3aaa; }
   #orb.talk { animation: pulse 0.7s infinite; background: radial-gradient(circle at 30% 30%, #9af0ff, #19b6e0 60%, #0a5a78); box-shadow:0 0 30px #19b6e0aa; }
+  #orb.logo { font-size:0; background:#000 url(logo.png) center/cover no-repeat; box-shadow:0 0 0 3px #2d6cdf, 0 0 24px #2d6cdf99; }
+  #orb.logo.on { background:#000 url(logo.png) center/cover no-repeat; box-shadow:0 0 0 4px #e03a3a, 0 0 30px #e03a3aaa; }
+  #orb.logo.talk { background:#000 url(logo.png) center/cover no-repeat; box-shadow:0 0 0 4px #19b6e0, 0 0 30px #19b6e0aa; }
   @keyframes pulse { 50% { transform: scale(1.12); } }
 </style>
 </head>
@@ -370,6 +373,9 @@ async function run(c){
     await A.openUrl({ url });
   }
 }
+
+// logo: www/logo.png मिले तो गोल बटन पर वही दिखेगा
+(function(){ const im = new Image(); im.onload = () => { $('orb').classList.add('logo'); $('orb').textContent = ''; }; im.src = 'logo.png'; })();
 
 init();
 </script>
