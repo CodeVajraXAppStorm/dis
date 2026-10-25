@@ -28,6 +28,7 @@
 <div id="panel">
   <h2>Jarvis</h2>
   <select id="prov" onchange="loadKey()">
+    <option value="groq">Groq</option>
     <option value="gemini">Gemini</option>
     <option value="claude">Claude</option>
   </select>
@@ -65,7 +66,7 @@ function saveKey(){
 }
 
 async function init(){
-  $('prov').value = localStorage.getItem('prov') || 'gemini';
+  $('prov').value = localStorage.getItem('prov') || 'groq';
   loadKey();
   try { assist = (await A.getMode()).assist; } catch(e) { log('Assistant plugin नहीं मिला: ' + e); }
   SR.addListener('partialResults', e => {
@@ -112,7 +113,7 @@ async function finish(){
   if (!last) { status('कुछ सुनाई नहीं दिया'); closeSoon(1500); return; }
   try {
     status('समझ रहा हूँ...');
-    const cmd = await ask(last);
+    const cmd = await Promise.race([ask(last), new Promise((_, rej) => setTimeout(() => rej(new Error('15 सेकंड में जवाब नहीं आया — key या internet जाँचो')), 15000))]);
     log(JSON.stringify(cmd));
     await run(cmd);
     closeSoon(1200);
@@ -123,7 +124,7 @@ async function finish(){
 }
 
 async function ask(text){
-  const prov = localStorage.getItem('prov') || 'gemini';
+  const prov = localStorage.getItem('prov') || 'groq';
   const key = localStorage.getItem('key_' + prov);
   if (!key) throw new Error('पहले API key save करो');
   const apps = (await A.getApps()).apps;
@@ -138,7 +139,26 @@ Schema: {"action":"search|open_app|alarm|whatsapp|unknown","target":"google|yout
 - anything else: action "unknown".`;
 
   let out;
-  if (prov === 'gemini') {
+  if (prov === 'groq') {
+    const models = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'];
+    let lastErr = '';
+    for (const model of models) {
+      const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key },
+        body: JSON.stringify({
+          model,
+          temperature: 0,
+          response_format: { type: 'json_object' },
+          messages: [{ role: 'system', content: sys }, { role: 'user', content: text }]
+        })
+      });
+      const j = typeof r.json === 'function' ? await r.json() : r.data;
+      if (j && j.choices && j.choices[0]) { out = j.choices[0].message.content; break; }
+      lastErr = (j && j.error && j.error.message) || JSON.stringify(j).slice(0, 200);
+    }
+    if (!out) throw new Error('Groq: ' + lastErr);
+  } else if (prov === 'gemini') {
     const models = ['gemini-2.5-flash', 'gemini-flash-latest'];
     let lastErr = '';
     for (const model of models) {
