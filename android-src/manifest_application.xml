@@ -1,0 +1,35 @@
+<activity
+    android:name=".AssistActivity"
+    android:exported="true"
+    android:theme="@style/AssistTheme"
+    android:launchMode="singleTask"
+    android:excludeFromRecents="true"
+    android:taskAffinity=""
+    android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode">
+    <intent-filter>
+        <action android:name="android.intent.action.ASSIST" />
+        <category android:name="android.intent.category.DEFAULT" />
+    </intent-filter>
+</activity>
+
+<service
+    android:name=".JarvisInteractionService"
+    android:permission="android.permission.BIND_VOICE_INTERACTION"
+    android:exported="true">
+    <meta-data android:name="android.voice_interaction" android:resource="@xml/voice_interaction_service" />
+    <intent-filter>
+        <action android:name="android.service.voice.VoiceInteractionService" />
+    </intent-filter>
+</service>
+
+<service
+    android:name=".JarvisSessionService"
+    android:permission="android.permission.BIND_VOICE_INTERACTION"
+    android:exported="true" />
+
+<service android:name=".JarvisRecognitionService" android:exported="true">
+    <intent-filter>
+        <action android:name="android.speech.RecognitionService" />
+        <category android:name="android.intent.category.DEFAULT" />
+    </intent-filter>
+</service>
