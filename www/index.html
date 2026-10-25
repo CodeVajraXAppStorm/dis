@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="hi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Jarvis</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, sans-serif; background:#0f1115; color:#eee; min-height:100vh; }
+  body.assist { background: transparent; }
+  #panel { padding:20px 16px 220px; }
+  h2 { margin:0 0 12px; }
+  select, input, button.s { width:100%; padding:12px; margin:6px 0; border-radius:10px; border:1px solid #333; background:#1a1d24; color:#eee; font-size:16px; }
+  button.s { background:#2d6cdf; border:0; }
+  .hint { font-size:13px; color:#9aa; line-height:1.5; }
+  #log { font-size:12px; color:#8c8; white-space:pre-wrap; max-height:160px; overflow:auto; }
+  #dock { position:fixed; left:0; right:0; bottom:0; padding:16px 16px 40px; text-align:center; }
+  #heard { font-size:18px; min-height:24px; margin-bottom:6px; text-shadow:0 1px 6px #000; }
+  #status { font-size:13px; color:#bbb; min-height:18px; margin-bottom:12px; text-shadow:0 1px 6px #000; }
+  #orb { width:84px; height:84px; border-radius:50%; border:0; font-size:34px; color:#fff;
+         background: radial-gradient(circle at 30% 30%, #7aa7ff, #2d6cdf 60%, #14307a);
+         box-shadow:0 0 24px #2d6cdf99; }
+  #orb.on { animation: pulse 1s infinite; background: radial-gradient(circle at 30% 30%, #ff9a9a, #e03a3a 60%, #7a1414); box-shadow:0 0 30px #e03a3aaa; }
+  @keyframes pulse { 50% { transform: scale(1.12); } }
+</style>
+</head>
+<body>
+<div id="panel">
+  <h2>Jarvis</h2>
+  <select id="prov" onchange="loadKey()">
+    <option value="gemini">Gemini</option>
+    <option value="claude">Claude</option>
+  </select>
+  <input id="key" type="password" placeholder="API key">
+  <button class="s" onclick="saveKey()">Save key</button>
+  <p class="hint">नीचे गोल बटन दबाओ और बोलो, जैसे "यूट्यूब में जेमिनी सर्च करो", "5 बजे सुबह का अलार्म लगाओ", "चेस खोलो", "व्हाट्सऐप पर 9876543210 को hi भेजो"।<br>
+  पावर/होम बटन लंबा दबाकर खोलने के लिए: Settings → Apps → Default apps → Digital assistant app → Jarvis.</p>
+  <pre id="log"></pre>
+</div>
+
+<div id="dock">
+  <div id="heard"></div>
+  <div id="status"></div>
+  <button id="orb" onclick="toggle()">🎤</button>
+</div>
+
+<script>
+const P = (window.Capacitor && window.Capacitor.Plugins) || {};
+const A = P.Assistant, SR = P.SpeechRecognition;
+let assist = false, listening = false, last = '', timer = null;
+const $ = id => document.getElementById(id);
+
+function log(t){ $('log').textContent = new Date().toLocaleTimeString() + '  ' + t + '\n' + $('log').textContent; }
+function status(t){ $('status').textContent = t; log(t); }
+function closeSoon(ms){ if (assist) setTimeout(() => A.close(), ms); }
+
+function loadKey(){
+  const p = $('prov').value;
+  localStorage.setItem('prov', p);
+  $('key').value = localStorage.getItem('key_' + p) || '';
+}
+function saveKey(){
+  localStorage.setItem('key_' + $('prov').value, $('key').value.trim());
+  status('Key save हो गई');
+}
+
+async function init(){
+  $('prov').value = localStorage.getItem('prov') || 'gemini';
+  loadKey();
+  try { assist = (await A.getMode()).assist; } catch(e) { log('Assistant plugin नहीं मिला: ' + e); }
+  SR.addListener('partialResults', e => {
+    last = (e.matches && e.matches[0]) || last;
+    $('heard').textContent = last;
+  });
+  SR.addListener('listeningState', e => {
+    if (e.status === 'stopped' && listening) { listening = false; setOrb(false); finish(); }
+  });
+  if (assist) {
+    document.body.classList.add('assist');
+    $('panel').style.display = 'none';
+    document.body.addEventListener('click', e => { if (e.target === document.body) A.close(); });
+    setTimeout(startListen, 250);
+  }
+}
+
+function setOrb(on){ $('orb').classList.toggle('on', on); }
+
+async function toggle(){ listening ? stopListen() : startListen(); }
+
+async function startListen(){
+  try {
+    const perm = await SR.requestPermissions();
+    if (perm.speechRecognition !== 'granted') { status('माइक permission दो'); return; }
+    last = ''; $('heard').textContent = '';
+    listening = true; setOrb(true); status('सुन रहा हूँ...');
+    await SR.start({ language: 'hi-IN', maxResults: 1, partialResults: true, popup: false });
+    clearTimeout(timer);
+    timer = setTimeout(stopListen, 10000);
+  } catch(e) {
+    listening = false; setOrb(false);
+    status('Mic error: ' + (e.message || e)); closeSoon(2500);
+  }
+}
+
+async function stopListen(){
+  clearTimeout(timer);
+  try { await SR.stop(); } catch(e) {}
+}
+
+async function finish(){
+  clearTimeout(timer);
+  if (!last) { status('कुछ सुनाई नहीं दिया'); closeSoon(1500); return; }
+  try {
+    status('समझ रहा हूँ...');
+    const cmd = await ask(last);
+    log(JSON.stringify(cmd));
+    await run(cmd);
+    closeSoon(1200);
+  } catch(e) {
+    status('Error: ' + (e.message || e));
+    closeSoon(3000);
+  }
+}
+
+async function ask(text){
+  const prov = localStorage.getItem('prov') || 'gemini';
+  const key = localStorage.getItem('key_' + prov);
+  if (!key) throw new Error('पहले API key save करो');
+  const apps = (await A.getApps()).apps;
+  window._apps = apps;
+  const names = [...new Set(apps.map(a => a.name))].join(', ');
+  const sys = `You convert a spoken phone command (Hindi, Hinglish or English, words may be in any order) into ONE JSON object and output only JSON.
+Schema: {"action":"search|open_app|alarm|whatsapp|unknown","target":"google|youtube","query":"","app":"","hour":0,"minute":0,"label":"","phone":"","text":""}
+- search: target is "youtube" if the user says YouTube/यूट्यूब, else "google". query is only the thing to search (no filler words like "search karo").
+- open_app: "app" must be copied EXACTLY from this installed list: ${names}. Pick the closest match even if the user said it in Hindi.
+- alarm: hour in 24h format (5 baje subah = 5, 5 baje shaam = 17), minute 0-59.
+- whatsapp: phone digits if said (else empty), text = exact message to type.
+- anything else: action "unknown".`;
+
+  let out;
+  if (prov === 'gemini') {
+    const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + key, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: sys }] },
+        contents: [{ parts: [{ text }] }],
+        generationConfig: { responseMimeType: 'application/json' }
+      })
+    });
+    const j = typeof r.json === 'function' ? await r.json() : r.data;
+    out = j.candidates[0].content.parts[0].text;
+  } else {
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
+      body: JSON.stringify({ model: 'claude-haiku-5-5', max_tokens: 300, system: sys, messages: [{ role: 'user', content: text }] })
+    });
+    const j = typeof r.json === 'function' ? await r.json() : r.data;
+    out = j.content[0].text;
+  }
+  const m = out.match(/\{[\s\S]*\}/);
+  if (!m) throw new Error('समझ नहीं आया');
+  return JSON.parse(m[0]);
+}
+
+async function run(c){
+  const enc = encodeURIComponent;
+  if (c.action === 'search') {
+    const url = c.target === 'youtube'
+      ? 'https://www.youtube.com/results?search_query=' + enc(c.query || '')
+      : 'https://www.google.com/search?q=' + enc(c.query || '');
+    status((c.target === 'youtube' ? 'YouTube' : 'Google') + ' पर: ' + c.query);
+    await A.openUrl({ url });
+  } else if (c.action === 'open_app') {
+    const want = (c.app || '').toLowerCase();
+    const apps = window._apps || [];
+    const hit = apps.find(a => a.name.toLowerCase() === want) || apps.find(a => a.name.toLowerCase().includes(want) && want);
+    if (!hit) throw new Error('ऐप नहीं मिला: ' + c.app);
+    status('खोल रहा हूँ: ' + hit.name);
+    await A.openApp({ pkg: hit.pkg });
+  } else if (c.action === 'alarm') {
+    status('अलार्म: ' + c.hour + ':' + String(c.minute || 0).padStart(2, '0'));
+    await A.setAlarm({ hour: c.hour, minute: c.minute || 0, label: c.label || 'Jarvis' });
+  } else if (c.action === 'whatsapp') {
+    let ph = (c.phone || '').replace(/\D/g, '');
+    if (ph.length === 10) ph = '91' + ph;
+    const url = ph ? 'https://wa.me/' + ph + '?text=' + enc(c.text || '') : 'https://wa.me/?text=' + enc(c.text || '');
+    status('WhatsApp खोल रहा हूँ — बस Send दबाओ');
+    await A.openUrl({ url });
+  } else {
+    throw new Error('ये कमांड समझ नहीं आया');
+  }
+}
+
+init();
+</script>
+</body>
+</html>
