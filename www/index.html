@@ -36,6 +36,7 @@
   </select>
   <input id="key" type="password" placeholder="API key">
   <button class="s" onclick="saveKey()">Save key</button>
+  <button class="s" style="background:#2a7a4b" onclick="voiceTest()">🔊 Voice test</button>
   <p class="hint">हर provider की key अलग-अलग save करो (dropdown बदलकर)। एक का limit खत्म हो तो अपने आप दूसरा चलेगा।<br>गोल बटन दबाओ और बोलो: "हाय", "यूट्यूब में जेमिनी सर्च करो", "5 बजे सुबह का अलार्म लगाओ", "चेस खोलो", "व्हाट्सऐप पर 9876543210 को hi भेजो", या कुछ भी पूछो।<br>
   पावर/होम बटन लंबा दबाकर खोलने के लिए: Settings → Apps → Default apps → Digital assistant app → Jarvis.</p>
   <pre id="log"></pre>
@@ -71,8 +72,23 @@ function webSpeak(t){
 async function say(t){
   status(t);
   $('orb').classList.add('talk');
-  try { await A.speak({ text: t }); } catch(e) { await webSpeak(t); }
+  try { await A.speak({ text: t }); } catch(e) { log('TTS error: ' + (e.message || e)); await webSpeak(t); }
   $('orb').classList.remove('talk');
+}
+
+
+async function voiceTest(){
+  try {
+    const i = await A.ttsInfo();
+    log('TTS: ' + JSON.stringify(i));
+    if (!i.ready) { status('TTS तैयार नहीं है (engine: ' + i.engine + ')'); return; }
+    if (!i.hindi) {
+      status('Hindi आवाज़ नहीं मिली — install स्क्रीन खुल रही है');
+      try { await A.installVoice(); } catch(e) { log('install: ' + (e.message || e)); }
+      return;
+    }
+    await say('हाय सर, मैं जार्विस हूँ।');
+  } catch(e) { status('Voice test error: ' + (e.message || e)); }
 }
 
 function loadKey(){
