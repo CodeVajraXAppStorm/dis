@@ -22,12 +22,14 @@ public class AssistantPlugin extends Plugin {
 
     private TextToSpeech tts;
     private boolean ttsReady = false;
+    private int langResult = -99;
 
     @Override
     public void load() {
         tts = new TextToSpeech(getContext(), status -> {
             if (status == TextToSpeech.SUCCESS) {
                 int r = tts.setLanguage(new Locale("hi", "IN"));
+                langResult = r;
                 if (r == TextToSpeech.LANG_MISSING_DATA || r == TextToSpeech.LANG_NOT_SUPPORTED) {
                     tts.setLanguage(Locale.getDefault());
                 }
@@ -61,6 +63,27 @@ public class AssistantPlugin extends Plugin {
     public void stopSpeaking(PluginCall call) {
         if (tts != null) tts.stop();
         call.resolve();
+    }
+
+    @PluginMethod
+    public void ttsInfo(PluginCall call) {
+        JSObject o = new JSObject();
+        o.put("ready", ttsReady);
+        o.put("hindi", langResult >= TextToSpeech.LANG_AVAILABLE);
+        o.put("engine", tts != null ? tts.getDefaultEngine() : "none");
+        call.resolve(o);
+    }
+
+    @PluginMethod
+    public void installVoice(PluginCall call) {
+        try {
+            Intent i = new Intent(TextToSpeech.Engine.ACTION_INSTALL_TTS_DATA);
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            getContext().startActivity(i);
+            call.resolve();
+        } catch (Exception e) {
+            call.reject(e.getMessage());
+        }
     }
 
     @PluginMethod
