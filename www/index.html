@@ -189,9 +189,9 @@ Actions:
         messages: [{ role: 'system', content: sys }, ...hist.map(h => ({ role: h.role, content: h.text })), { role: 'user', content: text }]
       })
     });
-    const j = typeof r.json === 'function' ? await r.json() : r.data;
+    const j = await r.json();
     if (j && j.choices && j.choices[0]) { out = j.choices[0].message.content; }
-    else { throw new Error('GitHub: ' + ((j && j.error && j.error.message) || JSON.stringify(j).slice(0, 200))); }
+    else { throw new Error('GitHub API: ' + ((j && j.error && j.error.message) || JSON.stringify(j).slice(0, 200))); }
   } else if (prov === 'groq') {
     const models = ['openai/gpt-oss-120b', 'openai/gpt-oss-20b'];
     let lastErr = '';
