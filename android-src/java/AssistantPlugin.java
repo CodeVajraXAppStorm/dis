@@ -5,6 +5,8 @@ import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.net.Uri;
 import android.provider.AlarmClock;
+import android.speech.tts.TextToSpeech;
+import android.speech.tts.UtteranceProgressListener;
 import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
@@ -12,9 +14,54 @@ import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 import java.util.List;
+import java.util.Locale;
+import java.util.UUID;
 
 @CapacitorPlugin(name = "Assistant")
 public class AssistantPlugin extends Plugin {
+
+    private TextToSpeech tts;
+    private boolean ttsReady = false;
+
+    @Override
+    public void load() {
+        tts = new TextToSpeech(getContext(), status -> {
+            if (status == TextToSpeech.SUCCESS) {
+                int r = tts.setLanguage(new Locale("hi", "IN"));
+                if (r == TextToSpeech.LANG_MISSING_DATA || r == TextToSpeech.LANG_NOT_SUPPORTED) {
+                    tts.setLanguage(Locale.getDefault());
+                }
+                tts.setPitch(0.9f);
+                tts.setSpeechRate(1.0f);
+                ttsReady = true;
+            }
+        });
+    }
+
+    @Override
+    protected void handleOnDestroy() {
+        if (tts != null) { tts.stop(); tts.shutdown(); }
+        super.handleOnDestroy();
+    }
+
+    @PluginMethod
+    public void speak(PluginCall call) {
+        if (!ttsReady) { call.reject("TTS not ready"); return; }
+        String text = call.getString("text", "");
+        final String id = UUID.randomUUID().toString();
+        tts.setOnUtteranceProgressListener(new UtteranceProgressListener() {
+            @Override public void onStart(String u) {}
+            @Override public void onDone(String u) { if (id.equals(u)) call.resolve(); }
+            @Override public void onError(String u) { call.reject("tts error"); }
+        });
+        tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, id);
+    }
+
+    @PluginMethod
+    public void stopSpeaking(PluginCall call) {
+        if (tts != null) tts.stop();
+        call.resolve();
+    }
 
     @PluginMethod
     public void getMode(PluginCall call) {
