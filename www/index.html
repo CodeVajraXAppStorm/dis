@@ -29,14 +29,14 @@
 <div id="panel">
   <h2>Jarvis</h2>
   <select id="prov" onchange="loadKey()">
-    <option value="github">GitHub</option>
     <option value="groq">Groq</option>
+    <option value="mistral">Mistral</option>
     <option value="gemini">Gemini</option>
     <option value="claude">Claude</option>
   </select>
   <input id="key" type="password" placeholder="API key">
   <button class="s" onclick="saveKey()">Save key</button>
-  <p class="hint">गोल बटन दबाओ और बोलो: "हाय", "यूट्यूब में जेमिनी सर्च करो", "5 बजे सुबह का अलार्म लगाओ", "चेस खोलो", "व्हाट्सऐप पर 9876543210 को hi भेजो", या कुछ भी पूछो।<br>
+  <p class="hint">हर provider की key अलग-अलग save करो (dropdown बदलकर)। एक का limit खत्म हो तो अपने आप दूसरा चलेगा।<br>गोल बटन दबाओ और बोलो: "हाय", "यूट्यूब में जेमिनी सर्च करो", "5 बजे सुबह का अलार्म लगाओ", "चेस खोलो", "व्हाट्सऐप पर 9876543210 को hi भेजो", या कुछ भी पूछो।<br>
   पावर/होम बटन लंबा दबाकर खोलने के लिए: Settings → Apps → Default apps → Digital assistant app → Jarvis.</p>
   <pre id="log"></pre>
 </div>
@@ -86,7 +86,7 @@ function saveKey(){
 }
 
 async function init(){
-  $('prov').value = localStorage.getItem('prov') || 'github';
+  $('prov').value = localStorage.getItem('prov') || 'groq';
   loadKey();
   try { assist = (await A.getMode()).assist; } catch(e) { log('Assistant plugin नहीं मिला: ' + e); }
   SR.addListener('partialResults', e => {
@@ -106,6 +106,7 @@ async function init(){
 
 function setOrb(on){ $('orb').classList.toggle('on', on); }
 async function toggle(){ listening ? stopListen() : startListen(); }
+
 async function startListen(){
   try {
     const perm = await SR.requestPermissions();
@@ -127,14 +128,98 @@ async function stopListen(){
 }
 
 function withTimeout(p){
-  return Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('15 सेकंड में जवाब नहीं आया — key या internet जाँचो')), 15000))]);
+  return Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('25 सेकंड में जवाब नहीं आया — key या internet जाँचो')), 25000))]);
+}
+
+
+// ---------- FAST PATH: common commands run instantly, without calling any AI ----------
+const APP_ALIAS = {
+  'व्हाट्सएप':['whatsapp'],'व्हाट्सऐप':['whatsapp'],'व्हाट्सअप':['whatsapp'],'वॉट्सऐप':['whatsapp'],'वाट्सएप':['whatsapp'],'whatsapp':['whatsapp'],
+  'यूट्यूब':['youtube'],'यू ट्यूब':['youtube'],'कैमरा':['camera'],'गैलरी':['gallery'],'सेटिंग':['settings'],'कैलकुलेटर':['calculator'],
+  'घड़ी':['clock'],'क्लॉक':['clock'],'इंस्टाग्राम':['instagram'],'फेसबुक':['facebook'],'टेलीग्राम':['telegram'],'स्नैपचैट':['snapchat'],
+  'क्रोम':['chrome'],'गूगल':['google'],'जीमेल':['gmail'],'मैप्स':['maps'],'मैप':['maps'],'प्ले स्टोर':['play store'],'प्लेस्टोर':['play store'],
+  'चेस':['chess'],'पूल':['pool'],'फोन':['phone'],'मैसेज':['messages'],'म्यूजिक':['music'],'फाइल':['my files','files'],'फोटो':['photos','gallery']
+};
+const SEARCH_WORDS = /सर्च|search|खोज|ढूंढ|ढूँढ/i;
+const DROP = new Set(['यूट्यूब','यू','ट्यूब','youtube','गूगल','google','पर','पे','में','मे','से','खोलकर','खोलके','खोल','खोलो','ओपन','open','सर्च','search','करो','कर','करना','करके','दो','दीजिए','ये','इसको','इसे','जाके','जाकर','जाओ','जा','और','फिर','ढूंढो','ढूँढो','खोजो','खोज','to','go','on','in','for','the','please','प्लीज']);
+
+function norm(t){ return t.toLowerCase().replace(/[.,?!।]/g, ' ').replace(/\s+/g, ' ').trim(); }
+
+function findApp(t, apps){
+  const pick = (needle) => apps.find(a => a.name.toLowerCase() === needle) || apps.find(a => a.name.toLowerCase().includes(needle));
+  for (const k of Object.keys(APP_ALIAS)) {
+    if (t.includes(k)) { for (const n of APP_ALIAS[k]) { const h = pick(n); if (h) return h; } }
+  }
+  let best = null;
+  for (const a of apps) {
+    const n = a.name.toLowerCase();
+    if (n.length >= 3 && t.includes(n) && (!best || n.length > best.name.length)) best = a;
+  }
+  return best;
+}
+
+async function fastPath(raw){
+  const t = norm(raw);
+  const apps = (await A.getApps()).apps;
+  window._apps = apps;
+
+  // 1) Search on YouTube / Google
+  const yt = /यूट्यूब|यू ट्यूब|youtube/.test(t);
+  const gg = /गूगल|google/.test(t);
+  if ((yt || gg) && SEARCH_WORDS.test(t)) {
+    let toks = t.split(' ').filter(w => w && !DROP.has(w));
+    while (toks.length && ['को', 'का', 'की', 'के'].includes(toks[toks.length - 1])) toks.pop();
+    const q = toks.join(' ').trim();
+    if (q) return { action: 'search', target: yt ? 'youtube' : 'google', query: q, reply: 'खोज रहा हूँ' };
+  }
+
+  // 2) Alarm
+  if (/अलार्म|alarm/.test(t)) {
+    const m = t.match(/(\d{1,2})(?:\s*[:.]\s*(\d{2}))?/);
+    if (m) {
+      let h = parseInt(m[1], 10); const min = m[2] ? parseInt(m[2], 10) : 0;
+      const pm = /शाम|रात|दोपहर|pm|p\.m/.test(t);
+      if (h <= 23 && min <= 59) {
+        if (pm && h < 12) h += 12;
+        if (/रात/.test(t) && h === 12) h = 0;
+        return { action: 'alarm', hour: h, minute: min, label: 'Jarvis', reply: 'अलार्म ' + h + ':' + String(min).padStart(2, '0') };
+      }
+    }
+  }
+
+  // 3) Open an app
+  if (/खोल|ओपन|open|चला|चालू|start|launch|लॉन्च|शुरू/.test(t)) {
+    const hit = findApp(t, apps);
+    if (hit) return { action: 'open_app', app: hit.name, reply: hit.name + ' खुल रहा है' };
+  }
+  return null;
+}
+
+
+const GREET = 'हाय सर, मैं जार्विस हूँ। बताइए, मैं आपकी क्या मदद कर सकता हूँ?';
+let greeted = false;
+const GREET_WORDS = new Set(['हाय','हाई','हेलो','हैलो','हलो','हे','हेय','नमस्ते','नमस्कार','जार्विस','जारविस','जरविस','जार्विश','जर्विस','सुनो','सुनिए','hi','hello','hey','jarvis','ok','ओके']);
+function isGreeting(t){
+  const toks = norm(t).split(' ').filter(Boolean);
+  return toks.length > 0 && toks.length <= 3 && toks.every(w => GREET_WORDS.has(w));
+}
+async function greetAndListen(){
+  greeted = true; turns++;
+  await say(GREET);
+  if (turns < 6) { await sleep(200); startListen(); } else closeSoon(300);
 }
 
 async function finish(){
   clearTimeout(timer);
-  if (!last) { status('कुछ सुनाई नहीं दिया'); closeSoon(1200); return; }
+  if (!last) {
+    if (!greeted) { await greetAndListen(); return; }
+    status('कुछ सुनाई नहीं दिया'); closeSoon(1200); return;
+  }
+  if (isGreeting(last)) { await greetAndListen(); return; }
   try {
     status('समझ रहा हूँ...');
+    const fast = await fastPath(last);
+    if (fast) { log('fast: ' + JSON.stringify(fast)); await run(fast); status(fast.reply + ' ✓'); closeSoon(500); return; }
     const cmd = await withTimeout(ask(last));
     log(JSON.stringify(cmd));
     const reply = cmd.reply || 'ठीक है सर।';
@@ -149,73 +234,46 @@ async function finish(){
     }
     if (cmd.action === 'close') { await say(reply); closeSoon(200); return; }
 
-    await say(reply);
     await run(cmd);
-    closeSoon(1000);
+    status(reply);
+    closeSoon(700);
   } catch(e) {
     status('Error: ' + (e.message || e));
     closeSoon(3500);
   }
 }
 
-async function ask(text){
-  const prov = localStorage.getItem('prov') || 'github';
-  const key = localStorage.getItem('key_' + prov);
-  if (!key) throw new Error('पहले API key save करो');
-  const apps = (await A.getApps()).apps;
-  window._apps = apps;
-  const names = [...new Set(apps.map(a => a.name))].join(', ');
-  const sys = `You are JARVIS, Tony Stark's polite, witty, calm AI butler, running on the user's Android phone. The user speaks Hindi, Hinglish or English; words may be in any order. Output ONE JSON object and nothing else.
-Schema: {"action":"chat|search|open_app|alarm|whatsapp|close|unknown","target":"google|youtube","query":"","app":"","hour":0,"minute":0,"label":"","phone":"","text":"","reply":""}
-"reply" is spoken aloud by a speaker: write it in Hindi (Devanagari), max 2 short sentences (up to 3 when answering a question), no emojis, no markdown, no lists. Address the user as "सर".
-Actions:
-- chat: greetings, questions, general talk. Answer inside "reply". If the user just says hi/hello/हाय, reply exactly: "हाय सर, मैं जार्विस हूँ। बताइए, मैं आपकी क्या मदद कर सकता हूँ?"
-- search: target is "youtube" if the user says YouTube/यूट्यूब, else "google". query is only the thing to search (no filler like "search karo"). reply = short confirmation like "ठीक है सर, यूट्यूब पर खोज रहा हूँ।"
-- open_app: "app" must be copied EXACTLY from this installed list: ${names}. Pick the closest match even if the user said it in Hindi. reply = short confirmation.
-- alarm: hour in 24h format (5 baje subah = 5, 5 baje shaam = 17), minute 0-59. reply = confirmation with the time.
-- whatsapp: phone digits if said (else empty), text = exact message to type. reply = short confirmation.
-- close: user says bas/bye/ok thanks/band karo. reply = short goodbye.
-- unknown: you could not understand; reply asks politely to repeat.`;
-
-  const hist = history.slice(-6);
-  let out;
-  if (prov === 'github') {
-    const r = await fetch('https://azure.com', {
+async function openaiChat(url, key, models, sys, hist, text, extra){
+  let lastErr = '';
+  for (const model of models) {
+    const r = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key },
-      body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        temperature: 0.3,
+      body: JSON.stringify(Object.assign({
+        model, temperature: 0.3,
         messages: [{ role: 'system', content: sys }, ...hist.map(h => ({ role: h.role, content: h.text })), { role: 'user', content: text }]
-      })
+      }, extra || {}))
     });
-    const j = await r.json();
-    if (j && j.choices && j.choices[0]) { out = j.choices[0].message.content; }
-    else { throw new Error('GitHub API: ' + ((j && j.error && j.error.message) || JSON.stringify(j).slice(0, 200))); }
-  } else if (prov === 'groq') {
-    const models = ['openai/gpt-oss-120b', 'openai/gpt-oss-20b'];
+    const j = typeof r.json === 'function' ? await r.json() : r.data;
+    if (j && j.choices && j.choices[0]) return j.choices[0].message.content;
+    lastErr = (j && j.error && j.error.message) || JSON.stringify(j).slice(0, 200);
+  }
+  throw new Error(lastErr);
+}
+
+async function callProvider(prov, key, sys, hist, text){
+  if (prov === 'groq') {
+    return openaiChat('https://api.groq.com/openai/v1/chat/completions', key,
+      ['openai/gpt-oss-120b', 'openai/gpt-oss-20b'], sys, hist, text, { reasoning_effort: 'low' });
+  }
+  if (prov === 'mistral') {
+    return openaiChat('https://api.mistral.ai/v1/chat/completions', key,
+      ['mistral-small-latest'], sys, hist, text, { response_format: { type: 'json_object' } });
+  }
+  if (prov === 'gemini') {
     let lastErr = '';
-    for (const model of models) {
-      const r = await fetch('https://groq.com', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key },
-        body: JSON.stringify({
-          model,
-          temperature: 0.3,
-          reasoning_effort: 'low',
-          messages: [{ role: 'system', content: sys }, ...hist.map(h => ({ role: h.role, content: h.text })), { role: 'user', content: text }]
-        })
-      });
-      const j = typeof r.json === 'function' ? await r.json() : r.data;
-      if (j && j.choices && j.choices[0]) { out = j.choices[0].message.content; break; }
-      lastErr = (j && j.error && j.error.message) || JSON.stringify(j).slice(0, 200);
-    }
-    if (!out) throw new Error('Groq: ' + lastErr);
-  } else if (prov === 'gemini') {
-    const models = ['gemini-2.5-flash', 'gemini-flash-latest'];
-    let lastErr = '';
-    for (const model of models) {
-      const r = await fetch('https://googleapis.com' + model + ':generateContent', {
+    for (const model of ['gemini-2.5-flash', 'gemini-flash-latest']) {
+      const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent', {
         method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: sys }] },
@@ -224,31 +282,58 @@ Actions:
         })
       });
       const j = typeof r.json === 'function' ? await r.json() : r.data;
-      if (j && j.candidates && j.candidates[0]) { out = j.candidates[0].content.parts[0].text; break; }
+      if (j && j.candidates && j.candidates[0]) return j.candidates[0].content.parts[0].text;
       lastErr = (j && j.error && j.error.message) || JSON.stringify(j).slice(0, 200);
     }
-    if (!out) throw new Error('Gemini: ' + lastErr);
-  } else {
-    const r = await fetch('https://anthropic.com', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
-      body: JSON.stringify({ model: 'claude-haiku-5-5', max_tokens: 400, system: sys, messages: [...hist.map(h => ({ role: h.role, content: h.text })), { role: 'user', content: text }] })
-    });
-    const j = typeof r.json === 'function' ? await r.json() : r.data;
-    if (!j.content) throw new Error('Claude: ' + ((j.error && j.error.message) || JSON.stringify(j).slice(0, 200)));
-    out = j.content[0].text;
+    throw new Error(lastErr);
   }
-  const m = out.match(/\{[\s\S]*\}/);
-  if (!m) throw new Error('समझ नहीं आया');
-  return JSON.parse(m[0]);
+  const r = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
+    body: JSON.stringify({ model: 'claude-haiku-5-5', max_tokens: 400, system: sys, messages: [...hist.map(h => ({ role: h.role, content: h.text })), { role: 'user', content: text }] })
+  });
+  const j = typeof r.json === 'function' ? await r.json() : r.data;
+  if (!j.content) throw new Error((j.error && j.error.message) || JSON.stringify(j).slice(0, 200));
+  return j.content[0].text;
+}
+
+async function ask(text){
+  const sel = localStorage.getItem('prov') || 'groq';
+  const order = [sel, ...['groq', 'mistral', 'gemini', 'claude'].filter(p => p !== sel)]
+    .filter(p => localStorage.getItem('key_' + p));
+  if (!order.length) throw new Error('पहले API key save करो');
+
+  const apps = (await A.getApps()).apps;
+  window._apps = apps;
+  const wantsApp = /खोल|ओपन|open|चला|चालू|start|launch|लॉन्च|शुरू/i.test(text);
+  const names = wantsApp ? [...new Set(apps.map(a => a.name))].join(', ') : '';
+  const sys = `You are JARVIS, a polite witty AI butler on the user's Android phone. User speaks Hindi/Hinglish/English, any word order. Reply with ONE JSON object only:
+{"action":"chat|search|open_app|alarm|whatsapp|close|unknown","target":"google|youtube","query":"","app":"","hour":0,"minute":0,"phone":"","text":"","reply":""}
+reply: spoken aloud, Hindi (Devanagari), max 2 short sentences, no emoji/markdown, call the user "सर".
+chat = talk/questions (answer in reply; if the user only says hi, reply exactly "हाय सर, मैं जार्विस हूँ। बताइए, मैं आपकी क्या मदद कर सकता हूँ?"). search = target youtube if YouTube is mentioned else google, query = only the search words. open_app = app name copied exactly from this list: ${names}. alarm = hour in 24h (subah 5 = 5, shaam 5 = 17). whatsapp = phone digits, text = the message. close = bas/bye. unknown = politely ask to repeat.`;
+
+  const hist = history.slice(-2);
+  const errs = [];
+  for (const prov of order) {
+    try {
+      const out = await callProvider(prov, localStorage.getItem('key_' + prov), sys, hist, text);
+      const m = out.match(/\{[\s\S]*\}/);
+      if (!m) throw new Error('समझ नहीं आया');
+      return JSON.parse(m[0]);
+    } catch(e) {
+      const msg = prov + ': ' + (e.message || e);
+      errs.push(msg); log(msg.slice(0, 160));
+    }
+  }
+  throw new Error(errs.join(' | ').slice(0, 220));
 }
 
 async function run(c){
   const enc = encodeURIComponent;
   if (c.action === 'search') {
     const url = c.target === 'youtube'
-      ? 'https://youtube.com' + enc(c.query || '')
-      : 'https://google.com' + enc(c.query || '');
+      ? 'https://www.youtube.com/results?search_query=' + enc(c.query || '')
+      : 'https://www.google.com/search?q=' + enc(c.query || '');
     log((c.target === 'youtube' ? 'YouTube' : 'Google') + ' पर: ' + c.query);
     await A.openUrl({ url });
   } else if (c.action === 'open_app') {
@@ -264,7 +349,7 @@ async function run(c){
   } else if (c.action === 'whatsapp') {
     let ph = (c.phone || '').replace(/\D/g, '');
     if (ph.length === 10) ph = '91' + ph;
-    const url = ph ? 'https://wa.me' + ph + '?text=' + enc(c.text || '') : 'https://wa.me?text=' + enc(c.text || '');
+    const url = ph ? 'https://wa.me/' + ph + '?text=' + enc(c.text || '') : 'https://wa.me/?text=' + enc(c.text || '');
     log('WhatsApp खुल रहा है — बस Send दबाओ');
     await A.openUrl({ url });
   }
