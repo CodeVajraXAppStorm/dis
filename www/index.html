@@ -29,6 +29,7 @@
 <div id="panel">
   <h2>Jarvis</h2>
   <select id="prov" onchange="loadKey()">
+    <option value="github">GitHub</option>
     <option value="groq">Groq</option>
     <option value="gemini">Gemini</option>
     <option value="claude">Claude</option>
@@ -85,7 +86,7 @@ function saveKey(){
 }
 
 async function init(){
-  $('prov').value = localStorage.getItem('prov') || 'groq';
+  $('prov').value = localStorage.getItem('prov') || 'github';
   loadKey();
   try { assist = (await A.getMode()).assist; } catch(e) { log('Assistant plugin नहीं मिला: ' + e); }
   SR.addListener('partialResults', e => {
@@ -105,7 +106,6 @@ async function init(){
 
 function setOrb(on){ $('orb').classList.toggle('on', on); }
 async function toggle(){ listening ? stopListen() : startListen(); }
-
 async function startListen(){
   try {
     const perm = await SR.requestPermissions();
@@ -159,7 +159,7 @@ async function finish(){
 }
 
 async function ask(text){
-  const prov = localStorage.getItem('prov') || 'groq';
+  const prov = localStorage.getItem('prov') || 'github';
   const key = localStorage.getItem('key_' + prov);
   if (!key) throw new Error('पहले API key save करो');
   const apps = (await A.getApps()).apps;
@@ -179,11 +179,24 @@ Actions:
 
   const hist = history.slice(-6);
   let out;
-  if (prov === 'groq') {
+  if (prov === 'github') {
+    const r = await fetch('https://azure.com', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        temperature: 0.3,
+        messages: [{ role: 'system', content: sys }, ...hist.map(h => ({ role: h.role, content: h.text })), { role: 'user', content: text }]
+      })
+    });
+    const j = typeof r.json === 'function' ? await r.json() : r.data;
+    if (j && j.choices && j.choices[0]) { out = j.choices[0].message.content; }
+    else { throw new Error('GitHub: ' + ((j && j.error && j.error.message) || JSON.stringify(j).slice(0, 200))); }
+  } else if (prov === 'groq') {
     const models = ['openai/gpt-oss-120b', 'openai/gpt-oss-20b'];
     let lastErr = '';
     for (const model of models) {
-      const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      const r = await fetch('https://groq.com', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key },
         body: JSON.stringify({
@@ -202,7 +215,7 @@ Actions:
     const models = ['gemini-2.5-flash', 'gemini-flash-latest'];
     let lastErr = '';
     for (const model of models) {
-      const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent', {
+      const r = await fetch('https://googleapis.com' + model + ':generateContent', {
         method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: sys }] },
@@ -216,7 +229,7 @@ Actions:
     }
     if (!out) throw new Error('Gemini: ' + lastErr);
   } else {
-    const r = await fetch('https://api.anthropic.com/v1/messages', {
+    const r = await fetch('https://anthropic.com', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
       body: JSON.stringify({ model: 'claude-haiku-5-5', max_tokens: 400, system: sys, messages: [...hist.map(h => ({ role: h.role, content: h.text })), { role: 'user', content: text }] })
@@ -234,8 +247,8 @@ async function run(c){
   const enc = encodeURIComponent;
   if (c.action === 'search') {
     const url = c.target === 'youtube'
-      ? 'https://www.youtube.com/results?search_query=' + enc(c.query || '')
-      : 'https://www.google.com/search?q=' + enc(c.query || '');
+      ? 'https://youtube.com' + enc(c.query || '')
+      : 'https://google.com' + enc(c.query || '');
     log((c.target === 'youtube' ? 'YouTube' : 'Google') + ' पर: ' + c.query);
     await A.openUrl({ url });
   } else if (c.action === 'open_app') {
@@ -251,7 +264,7 @@ async function run(c){
   } else if (c.action === 'whatsapp') {
     let ph = (c.phone || '').replace(/\D/g, '');
     if (ph.length === 10) ph = '91' + ph;
-    const url = ph ? 'https://wa.me/' + ph + '?text=' + enc(c.text || '') : 'https://wa.me/?text=' + enc(c.text || '');
+    const url = ph ? 'https://wa.me' + ph + '?text=' + enc(c.text || '') : 'https://wa.me?text=' + enc(c.text || '');
     log('WhatsApp खुल रहा है — बस Send दबाओ');
     await A.openUrl({ url });
   }
