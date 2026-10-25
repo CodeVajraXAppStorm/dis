@@ -16,6 +16,9 @@ jobs:
           java-version: 17
       - run: npm install
       - run: npx cap add android
+      - name: Generate app icons from assets/icon.png
+        if: hashFiles('assets/icon.png') != ''
+        run: npx -y @capacitor/assets generate --android --iconBackgroundColor '#0f1115' --iconBackgroundColorDark '#0f1115'
       - run: python3 scripts/patch_android.py
       - run: npx cap sync android
       - run: |
