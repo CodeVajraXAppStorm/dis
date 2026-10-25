@@ -8,7 +8,7 @@
   * { box-sizing: border-box; }
   body { margin:0; font-family: system-ui, sans-serif; background:#0f1115; color:#eee; min-height:100vh; }
   body.assist { background: transparent; }
-  #panel { padding:20px 16px 220px; }
+  #panel { padding:20px 16px 240px; }
   h2 { margin:0 0 12px; }
   select, input, button.s { width:100%; padding:12px; margin:6px 0; border-radius:10px; border:1px solid #333; background:#1a1d24; color:#eee; font-size:16px; }
   button.s { background:#2d6cdf; border:0; }
@@ -16,11 +16,12 @@
   #log { font-size:12px; color:#8c8; white-space:pre-wrap; max-height:160px; overflow:auto; }
   #dock { position:fixed; left:0; right:0; bottom:0; padding:16px 16px 40px; text-align:center; }
   #heard { font-size:18px; min-height:24px; margin-bottom:6px; text-shadow:0 1px 6px #000; }
-  #status { font-size:13px; color:#bbb; min-height:18px; margin-bottom:12px; text-shadow:0 1px 6px #000; }
+  #status { font-size:14px; color:#cde; min-height:20px; margin-bottom:12px; text-shadow:0 1px 6px #000; }
   #orb { width:84px; height:84px; border-radius:50%; border:0; font-size:34px; color:#fff;
          background: radial-gradient(circle at 30% 30%, #7aa7ff, #2d6cdf 60%, #14307a);
          box-shadow:0 0 24px #2d6cdf99; }
   #orb.on { animation: pulse 1s infinite; background: radial-gradient(circle at 30% 30%, #ff9a9a, #e03a3a 60%, #7a1414); box-shadow:0 0 30px #e03a3aaa; }
+  #orb.talk { animation: pulse 0.7s infinite; background: radial-gradient(circle at 30% 30%, #9af0ff, #19b6e0 60%, #0a5a78); box-shadow:0 0 30px #19b6e0aa; }
   @keyframes pulse { 50% { transform: scale(1.12); } }
 </style>
 </head>
@@ -34,7 +35,7 @@
   </select>
   <input id="key" type="password" placeholder="API key">
   <button class="s" onclick="saveKey()">Save key</button>
-  <p class="hint">नीचे गोल बटन दबाओ और बोलो, जैसे "यूट्यूब में जेमिनी सर्च करो", "5 बजे सुबह का अलार्म लगाओ", "चेस खोलो", "व्हाट्सऐप पर 9876543210 को hi भेजो"।<br>
+  <p class="hint">गोल बटन दबाओ और बोलो: "हाय", "यूट्यूब में जेमिनी सर्च करो", "5 बजे सुबह का अलार्म लगाओ", "चेस खोलो", "व्हाट्सऐप पर 9876543210 को hi भेजो", या कुछ भी पूछो।<br>
   पावर/होम बटन लंबा दबाकर खोलने के लिए: Settings → Apps → Default apps → Digital assistant app → Jarvis.</p>
   <pre id="log"></pre>
 </div>
@@ -48,12 +49,30 @@
 <script>
 const P = (window.Capacitor && window.Capacitor.Plugins) || {};
 const A = P.Assistant, SR = P.SpeechRecognition;
-let assist = false, listening = false, last = '', timer = null;
+let assist = false, listening = false, last = '', timer = null, history = [], turns = 0;
 const $ = id => document.getElementById(id);
 
 function log(t){ $('log').textContent = new Date().toLocaleTimeString() + '  ' + t + '\n' + $('log').textContent; }
 function status(t){ $('status').textContent = t; log(t); }
 function closeSoon(ms){ if (assist) setTimeout(() => A.close(), ms); }
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+function webSpeak(t){
+  return new Promise(res => {
+    try {
+      const u = new SpeechSynthesisUtterance(t);
+      u.lang = 'hi-IN'; u.onend = res; u.onerror = res;
+      speechSynthesis.speak(u);
+      setTimeout(res, 9000);
+    } catch(e) { res(); }
+  });
+}
+async function say(t){
+  status(t);
+  $('orb').classList.add('talk');
+  try { await A.speak({ text: t }); } catch(e) { await webSpeak(t); }
+  $('orb').classList.remove('talk');
+}
 
 function loadKey(){
   const p = $('prov').value;
@@ -85,7 +104,6 @@ async function init(){
 }
 
 function setOrb(on){ $('orb').classList.toggle('on', on); }
-
 async function toggle(){ listening ? stopListen() : startListen(); }
 
 async function startListen(){
@@ -108,18 +126,35 @@ async function stopListen(){
   try { await SR.stop(); } catch(e) {}
 }
 
+function withTimeout(p){
+  return Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('15 सेकंड में जवाब नहीं आया — key या internet जाँचो')), 15000))]);
+}
+
 async function finish(){
   clearTimeout(timer);
-  if (!last) { status('कुछ सुनाई नहीं दिया'); closeSoon(1500); return; }
+  if (!last) { status('कुछ सुनाई नहीं दिया'); closeSoon(1200); return; }
   try {
     status('समझ रहा हूँ...');
-    const cmd = await Promise.race([ask(last), new Promise((_, rej) => setTimeout(() => rej(new Error('15 सेकंड में जवाब नहीं आया — key या internet जाँचो')), 15000))]);
+    const cmd = await withTimeout(ask(last));
     log(JSON.stringify(cmd));
+    const reply = cmd.reply || 'ठीक है सर।';
+    history.push({ role: 'user', text: last }, { role: 'assistant', text: reply });
+    history = history.slice(-8);
+    turns++;
+
+    if (cmd.action === 'chat' || cmd.action === 'unknown') {
+      await say(reply);
+      if (turns < 6) { await sleep(300); startListen(); } else closeSoon(300);
+      return;
+    }
+    if (cmd.action === 'close') { await say(reply); closeSoon(200); return; }
+
+    await say(reply);
     await run(cmd);
-    closeSoon(1200);
+    closeSoon(1000);
   } catch(e) {
     status('Error: ' + (e.message || e));
-    closeSoon(3000);
+    closeSoon(3500);
   }
 }
 
@@ -130,17 +165,22 @@ async function ask(text){
   const apps = (await A.getApps()).apps;
   window._apps = apps;
   const names = [...new Set(apps.map(a => a.name))].join(', ');
-  const sys = `You convert a spoken phone command (Hindi, Hinglish or English, words may be in any order) into ONE JSON object and output only JSON.
-Schema: {"action":"search|open_app|alarm|whatsapp|unknown","target":"google|youtube","query":"","app":"","hour":0,"minute":0,"label":"","phone":"","text":""}
-- search: target is "youtube" if the user says YouTube/यूट्यूब, else "google". query is only the thing to search (no filler words like "search karo").
-- open_app: "app" must be copied EXACTLY from this installed list: ${names}. Pick the closest match even if the user said it in Hindi.
-- alarm: hour in 24h format (5 baje subah = 5, 5 baje shaam = 17), minute 0-59.
-- whatsapp: phone digits if said (else empty), text = exact message to type.
-- anything else: action "unknown".`;
+  const sys = `You are JARVIS, Tony Stark's polite, witty, calm AI butler, running on the user's Android phone. The user speaks Hindi, Hinglish or English; words may be in any order. Output ONE JSON object and nothing else.
+Schema: {"action":"chat|search|open_app|alarm|whatsapp|close|unknown","target":"google|youtube","query":"","app":"","hour":0,"minute":0,"label":"","phone":"","text":"","reply":""}
+"reply" is spoken aloud by a speaker: write it in Hindi (Devanagari), max 2 short sentences (up to 3 when answering a question), no emojis, no markdown, no lists. Address the user as "सर".
+Actions:
+- chat: greetings, questions, general talk. Answer inside "reply". If the user just says hi/hello/हाय, reply exactly: "हाय सर, मैं जार्विस हूँ। बताइए, मैं आपकी क्या मदद कर सकता हूँ?"
+- search: target is "youtube" if the user says YouTube/यूट्यूब, else "google". query is only the thing to search (no filler like "search karo"). reply = short confirmation like "ठीक है सर, यूट्यूब पर खोज रहा हूँ।"
+- open_app: "app" must be copied EXACTLY from this installed list: ${names}. Pick the closest match even if the user said it in Hindi. reply = short confirmation.
+- alarm: hour in 24h format (5 baje subah = 5, 5 baje shaam = 17), minute 0-59. reply = confirmation with the time.
+- whatsapp: phone digits if said (else empty), text = exact message to type. reply = short confirmation.
+- close: user says bas/bye/ok thanks/band karo. reply = short goodbye.
+- unknown: you could not understand; reply asks politely to repeat.`;
 
+  const hist = history.slice(-6);
   let out;
   if (prov === 'groq') {
-    const models = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'];
+    const models = ['openai/gpt-oss-120b', 'openai/gpt-oss-20b'];
     let lastErr = '';
     for (const model of models) {
       const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
@@ -148,9 +188,9 @@ Schema: {"action":"search|open_app|alarm|whatsapp|unknown","target":"google|yout
         headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key },
         body: JSON.stringify({
           model,
-          temperature: 0,
-          response_format: { type: 'json_object' },
-          messages: [{ role: 'system', content: sys }, { role: 'user', content: text }]
+          temperature: 0.3,
+          reasoning_effort: 'low',
+          messages: [{ role: 'system', content: sys }, ...hist.map(h => ({ role: h.role, content: h.text })), { role: 'user', content: text }]
         })
       });
       const j = typeof r.json === 'function' ? await r.json() : r.data;
@@ -166,7 +206,7 @@ Schema: {"action":"search|open_app|alarm|whatsapp|unknown","target":"google|yout
         method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: sys }] },
-          contents: [{ parts: [{ text }] }],
+          contents: [...hist.map(h => ({ role: h.role === 'assistant' ? 'model' : 'user', parts: [{ text: h.text }] })), { role: 'user', parts: [{ text }] }],
           generationConfig: { responseMimeType: 'application/json' }
         })
       });
@@ -179,7 +219,7 @@ Schema: {"action":"search|open_app|alarm|whatsapp|unknown","target":"google|yout
     const r = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
-      body: JSON.stringify({ model: 'claude-haiku-5-5', max_tokens: 300, system: sys, messages: [{ role: 'user', content: text }] })
+      body: JSON.stringify({ model: 'claude-haiku-5-5', max_tokens: 400, system: sys, messages: [...hist.map(h => ({ role: h.role, content: h.text })), { role: 'user', content: text }] })
     });
     const j = typeof r.json === 'function' ? await r.json() : r.data;
     if (!j.content) throw new Error('Claude: ' + ((j.error && j.error.message) || JSON.stringify(j).slice(0, 200)));
@@ -196,26 +236,24 @@ async function run(c){
     const url = c.target === 'youtube'
       ? 'https://www.youtube.com/results?search_query=' + enc(c.query || '')
       : 'https://www.google.com/search?q=' + enc(c.query || '');
-    status((c.target === 'youtube' ? 'YouTube' : 'Google') + ' पर: ' + c.query);
+    log((c.target === 'youtube' ? 'YouTube' : 'Google') + ' पर: ' + c.query);
     await A.openUrl({ url });
   } else if (c.action === 'open_app') {
     const want = (c.app || '').toLowerCase();
     const apps = window._apps || [];
-    const hit = apps.find(a => a.name.toLowerCase() === want) || apps.find(a => a.name.toLowerCase().includes(want) && want);
+    const hit = apps.find(a => a.name.toLowerCase() === want) || apps.find(a => want && a.name.toLowerCase().includes(want));
     if (!hit) throw new Error('ऐप नहीं मिला: ' + c.app);
-    status('खोल रहा हूँ: ' + hit.name);
+    log('खोल रहा हूँ: ' + hit.name);
     await A.openApp({ pkg: hit.pkg });
   } else if (c.action === 'alarm') {
-    status('अलार्म: ' + c.hour + ':' + String(c.minute || 0).padStart(2, '0'));
+    log('अलार्म: ' + c.hour + ':' + String(c.minute || 0).padStart(2, '0'));
     await A.setAlarm({ hour: c.hour, minute: c.minute || 0, label: c.label || 'Jarvis' });
   } else if (c.action === 'whatsapp') {
     let ph = (c.phone || '').replace(/\D/g, '');
     if (ph.length === 10) ph = '91' + ph;
     const url = ph ? 'https://wa.me/' + ph + '?text=' + enc(c.text || '') : 'https://wa.me/?text=' + enc(c.text || '');
-    status('WhatsApp खोल रहा हूँ — बस Send दबाओ');
+    log('WhatsApp खुल रहा है — बस Send दबाओ');
     await A.openUrl({ url });
-  } else {
-    throw new Error('ये कमांड समझ नहीं आया');
   }
 }
 
