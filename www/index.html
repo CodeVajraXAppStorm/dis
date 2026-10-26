@@ -6,8 +6,11 @@
 <title>Jarvis</title>
 <style>
   * { box-sizing: border-box; }
-  body { margin:0; font-family: system-ui, sans-serif; background:#0f1115; color:#eee; min-height:100vh; }
-  body.assist { background: transparent; }
+  html, body { background: transparent; }
+  body { margin:0; font-family: system-ui, sans-serif; color:#eee; min-height:100vh; }
+  body.app { background:#0f1115; }
+  body.assist, html:has(body.assist) { background: transparent !important; }
+  body.assist #heard, body.assist #status { text-shadow: 0 0 6px #000, 0 1px 3px #000, 0 0 12px #000; }
   #panel { padding:20px 16px 240px; }
   h2 { margin:0 0 12px; }
   select, input, button.s { width:100%; padding:12px; margin:6px 0; border-radius:10px; border:1px solid #333; background:#1a1d24; color:#eee; font-size:16px; }
@@ -108,6 +111,7 @@ async function init(){
   $('prov').value = localStorage.getItem('prov') || 'groq';
   loadKey();
   try { assist = (await A.getMode()).assist; } catch(e) { log('Assistant plugin नहीं मिला: ' + e); }
+  document.body.classList.add(assist ? 'assist' : 'app');
   SR.addListener('partialResults', e => {
     last = (e.matches && e.matches[0]) || last;
     $('heard').textContent = last;
@@ -124,7 +128,12 @@ async function init(){
 }
 
 function setOrb(on){ $('orb').classList.toggle('on', on); }
-async function toggle(){ listening ? stopListen() : startListen(); }
+async function toggle(){
+  if (listening) {
+    if (assist) { listening = false; setOrb(false); try { await SR.stop(); } catch(e) {} A.close(); }
+    else stopListen();
+  } else startListen();
+}
 
 async function startListen(){
   try {
