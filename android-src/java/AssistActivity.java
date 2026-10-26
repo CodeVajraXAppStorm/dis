@@ -36,7 +36,7 @@ public class AssistActivity extends BridgeActivity {
     }
 
     @Override
-    protected void onDestroy() {
+    public void onDestroy() {
         running = false;
         super.onDestroy();
         JarvisSession s = JarvisSession.current;
