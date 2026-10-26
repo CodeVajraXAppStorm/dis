@@ -7,10 +7,13 @@ import android.view.WindowManager;
 import com.getcapacitor.BridgeActivity;
 
 public class AssistActivity extends BridgeActivity {
+    public static volatile boolean running = false;
+
     @Override
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(AssistantPlugin.class);
         super.onCreate(savedInstanceState);
+        running = true;
         getWindow().setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
         getWindow().clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
     }
@@ -23,12 +26,22 @@ public class AssistActivity extends BridgeActivity {
         }
     }
 
-    // Jab bhi screen se hat jaye, ye activity band ho jaye, taaki agli baar home long-press par naya fresh session shuru ho.
+    // Jab screen se hat jaye to band ho jaye, taaki agli baar naya session shuru ho.
     @Override
     public void onStop() {
         super.onStop();
         if (!isFinishing()) {
             finishAndRemoveTask();
+        }
+    }
+
+    @Override
+    protected void onDestroy() {
+        running = false;
+        super.onDestroy();
+        JarvisSession s = JarvisSession.current;
+        if (s != null) {
+            try { s.hide(); } catch (Exception ignored) {}
         }
     }
 }
