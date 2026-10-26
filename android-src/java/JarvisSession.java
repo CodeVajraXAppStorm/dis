@@ -6,9 +6,10 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.service.voice.VoiceInteractionSession;
-import android.widget.Toast;
 
 public class JarvisSession extends VoiceInteractionSession {
+    public static JarvisSession current;
+
     public JarvisSession(Context context) {
         super(context);
     }
@@ -16,15 +17,25 @@ public class JarvisSession extends VoiceInteractionSession {
     @Override
     public void onShow(Bundle args, int showFlags) {
         super.onShow(args, showFlags);
-        Toast.makeText(getContext(), "Jarvis सेशन चालू", Toast.LENGTH_SHORT).show();
-        Intent i = new Intent(getContext(), AssistActivity.class);
+        current = this;
+        final Intent i = new Intent(getContext(), AssistActivity.class);
         i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_NO_ANIMATION);
         try {
             startAssistantActivity(i);
         } catch (Exception e) {
             try { getContext().startActivity(i); } catch (Exception ignored) {}
         }
-        // do not finish immediately; give the system time to start the activity
-        new Handler(Looper.getMainLooper()).postDelayed(this::hide, 1500);
+        // Agar kisi dusri app (Gallery etc.) ke upar activity shuru nahi hui, to dobara seedha shuru karo.
+        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+            if (!AssistActivity.running) {
+                try { getContext().startActivity(i); } catch (Exception ignored) {}
+            }
+        }, 700);
+    }
+
+    @Override
+    public void onHide() {
+        super.onHide();
+        if (current == this) current = null;
     }
 }
