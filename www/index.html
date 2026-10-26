@@ -44,8 +44,13 @@
   </select>
   <input id="key" type="password" placeholder="API key">
   <button class="s" onclick="saveKey()">Save key</button>
+  <input id="city" placeholder="आपका शहर (मौसम के लिए), जैसे Delhi">
+  <input id="home" placeholder="घर का पता (रास्ते के लिए)">
+  <button class="s" onclick="saveSettings()">शहर और घर का पता save करो</button>
+  <button class="s" style="background:#7a4fd0" onclick="givePerms()">🔐 Permissions दो (कॉन्टैक्ट, कॉल, कैलेंडर, नोटिफिकेशन)</button>
   <button class="s" style="background:#2a7a4b" onclick="voiceTest()">🔊 Voice test</button>
-  <p class="hint">हर provider की key अलग-अलग save करो (dropdown बदलकर)। एक का limit खत्म हो तो अपने आप दूसरा चलेगा।<br>गोल बटन दबाओ और बोलो: "हाय", "यूट्यूब में जेमिनी सर्च करो", "5 बजे सुबह का अलार्म लगाओ", "चेस खोलो", "व्हाट्सऐप पर 9876543210 को hi भेजो", या कुछ भी पूछो।<br>
+  <p class="hint">हर provider की key अलग-अलग save करो (dropdown बदलकर)। एक का limit खत्म हो तो अपने आप दूसरा चलेगा।<br>
+  बोलकर देखो: "हाय" · "यूट्यूब में जेमिनी सर्च करो" · "5 बजे सुबह का अलार्म" · "10 मिनट का टाइमर" · "राहुल को कॉल करो" · "मम्मी को व्हाट्सएप पर hi भेजो" · "टॉर्च चालू करो" · "आवाज़ बढ़ाओ" · "बैटरी कितनी है" · "मौसम कैसा है" · "गुड मॉर्निंग" · "नोट कर लो कि कल दूध लाना है" · "मेरे नोट सुनाओ" · "एक पुराना गाना चलाओ" · "घर का रास्ता दिखाओ" · "इसे अंग्रेज़ी में बोलो: आप कैसे हैं" · "शाम 6 बजे मम्मी को मैसेज भेजना याद दिलाओ".<br>
   पावर/होम बटन लंबा दबाकर खोलने के लिए: Settings → Apps → Default apps → Digital assistant app → Jarvis.</p>
   <pre id="log"></pre>
 </div>
@@ -59,32 +64,54 @@
 <script>
 const P = (window.Capacitor && window.Capacitor.Plugins) || {};
 const A = P.Assistant, SR = P.SpeechRecognition;
-let assist = false, listening = false, last = '', timer = null, history = [], turns = 0;
+let assist = false, listening = false, last = '', timer = null, history = [], turns = 0, greeted = false;
 const $ = id => document.getElementById(id);
+const enc = encodeURIComponent;
+const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 function log(t){ $('log').textContent = new Date().toLocaleTimeString() + '  ' + t + '\n' + $('log').textContent; }
 function status(t){ $('status').textContent = t; log(t); }
 function closeSoon(ms){ if (assist) setTimeout(() => A.close(), ms); }
-const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-function webSpeak(t){
+function webSpeak(t, lang){
   return new Promise(res => {
     try {
       const u = new SpeechSynthesisUtterance(t);
-      u.lang = 'hi-IN'; u.onend = res; u.onerror = res;
+      u.lang = lang || 'hi-IN'; u.onend = res; u.onerror = res;
       speechSynthesis.speak(u);
       setTimeout(res, 9000);
     } catch(e) { res(); }
   });
 }
-async function say(t){
+async function say(t, lang){
   status(t);
   $('orb').classList.add('talk');
-  try { await A.speak({ text: t }); } catch(e) { log('TTS error: ' + (e.message || e)); await webSpeak(t); }
+  try { await A.speak({ text: t, lang: lang || 'hi-IN' }); }
+  catch(e) { log('TTS error: ' + (e.message || e)); await webSpeak(t, lang); }
   $('orb').classList.remove('talk');
 }
 
-
+// ---------- settings ----------
+function loadKey(){
+  const p = $('prov').value;
+  localStorage.setItem('prov', p);
+  $('key').value = localStorage.getItem('key_' + p) || '';
+}
+function saveKey(){
+  localStorage.setItem('key_' + $('prov').value, $('key').value.trim());
+  status('Key save हो गई');
+}
+function saveSettings(){
+  localStorage.setItem('city', $('city').value.trim());
+  localStorage.setItem('home', $('home').value.trim());
+  status('शहर और घर का पता save हो गया');
+}
+async function givePerms(){
+  try {
+    const r = await A.requestPerms();
+    status('संपर्क ' + (r.contacts ? '✓' : '✗') + '  कॉल ' + (r.call ? '✓' : '✗') + '  कैलेंडर ' + (r.calendar ? '✓' : '✗') + '  नोटिफिकेशन ' + (r.notif ? '✓' : '✗'));
+  } catch(e) { status('Permission error: ' + (e.message || e)); }
+}
 async function voiceTest(){
   try {
     const i = await A.ttsInfo();
@@ -99,19 +126,12 @@ async function voiceTest(){
   } catch(e) { status('Voice test error: ' + (e.message || e)); }
 }
 
-function loadKey(){
-  const p = $('prov').value;
-  localStorage.setItem('prov', p);
-  $('key').value = localStorage.getItem('key_' + p) || '';
-}
-function saveKey(){
-  localStorage.setItem('key_' + $('prov').value, $('key').value.trim());
-  status('Key save हो गई');
-}
-
+// ---------- start-up ----------
 async function init(){
   $('prov').value = localStorage.getItem('prov') || 'groq';
   loadKey();
+  $('city').value = localStorage.getItem('city') || '';
+  $('home').value = localStorage.getItem('home') || '';
   try { assist = (await A.getMode()).assist; } catch(e) { log('Assistant plugin नहीं मिला: ' + e); }
   document.body.classList.add(assist ? 'assist' : 'app');
   SR.addListener('partialResults', e => {
@@ -122,7 +142,6 @@ async function init(){
     if (e.status === 'stopped' && listening) { listening = false; setOrb(false); finish(); }
   });
   if (assist) {
-    document.body.classList.add('assist');
     $('panel').style.display = 'none';
     document.body.addEventListener('click', e => { if (e.target === document.body) A.close(); });
     setTimeout(startListen, 250);
@@ -151,18 +170,87 @@ async function startListen(){
     status('Mic error: ' + (e.message || e)); closeSoon(2500);
   }
 }
-
-async function stopListen(){
-  clearTimeout(timer);
-  try { await SR.stop(); } catch(e) {}
-}
-
+async function stopListen(){ clearTimeout(timer); try { await SR.stop(); } catch(e) {} }
 function withTimeout(p){
   return Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('25 सेकंड में जवाब नहीं आया — key या internet जाँचो')), 25000))]);
 }
 
+// ---------- helpers: Hindi time / date ----------
+const DAYS = ['रविवार','सोमवार','मंगलवार','बुधवार','गुरुवार','शुक्रवार','शनिवार'];
+const MONTHS = ['जनवरी','फरवरी','मार्च','अप्रैल','मई','जून','जुलाई','अगस्त','सितंबर','अक्टूबर','नवंबर','दिसंबर'];
+function timeWords(d){
+  const h = d.getHours(), m = d.getMinutes(), h12 = h % 12 || 12;
+  const part = h < 4 ? 'रात' : h < 12 ? 'सुबह' : h < 16 ? 'दोपहर' : h < 20 ? 'शाम' : 'रात';
+  return part + ' के ' + h12 + (m ? ' बजकर ' + m + ' मिनट' : ' बजे');
+}
+function dateWords(d){ return DAYS[d.getDay()] + ', ' + d.getDate() + ' ' + MONTHS[d.getMonth()]; }
+function norm(t){ return t.toLowerCase().replace(/[.,?!।]/g, ' ').replace(/\s+/g, ' ').trim(); }
 
-// ---------- FAST PATH: common commands run instantly, without calling any AI ----------
+// ---------- weather (Open-Meteo, no key) ----------
+async function jget(url){ const r = await fetch(url); return typeof r.json === 'function' ? await r.json() : r.data; }
+const WCODE = {0:'आसमान साफ़ है',1:'ज़्यादातर साफ़ है',2:'आंशिक बादल हैं',3:'बादल छाए हैं',45:'कोहरा है',48:'कोहरा है',51:'हल्की बूंदाबांदी है',53:'बूंदाबांदी हो रही है',55:'तेज़ बूंदाबांदी है',61:'हल्की बारिश हो रही है',63:'बारिश हो रही है',65:'तेज़ बारिश हो रही है',71:'हल्की बर्फ़ गिर रही है',73:'बर्फ़बारी हो रही है',75:'तेज़ बर्फ़बारी है',80:'बारिश की बौछारें हैं',81:'बौछारें पड़ रही हैं',82:'तेज़ बौछारें पड़ रही हैं',95:'आंधी-तूफ़ान है',96:'ओलों के साथ तूफ़ान है',99:'तेज़ तूफ़ान है'};
+async function getWeather(city){
+  city = city || localStorage.getItem('city');
+  if (!city) throw new Error('पहले ऐप में अपना शहर save करो');
+  const g = await jget('https://geocoding-api.open-meteo.com/v1/search?name=' + enc(city) + '&count=1&language=hi');
+  if (!g.results || !g.results[0]) throw new Error('शहर नहीं मिला: ' + city);
+  const { latitude, longitude, name } = g.results[0];
+  const w = await jget('https://api.open-meteo.com/v1/forecast?latitude=' + latitude + '&longitude=' + longitude + '&current=temperature_2m,weather_code&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max&timezone=auto&forecast_days=1');
+  const cur = w.current, dly = w.daily;
+  let s = name + ' में अभी ' + Math.round(cur.temperature_2m) + ' डिग्री है, ' + (WCODE[cur.weather_code] || 'मौसम सामान्य है') + '। आज अधिकतम ' + Math.round(dly.temperature_2m_max[0]) + ' और न्यूनतम ' + Math.round(dly.temperature_2m_min[0]) + ' डिग्री रहेगा।';
+  const rain = dly.precipitation_probability_max && dly.precipitation_probability_max[0];
+  if (rain >= 40) s += ' बारिश की संभावना ' + rain + ' प्रतिशत है।';
+  return s;
+}
+
+async function briefing(){
+  const d = new Date(), h = d.getHours();
+  const hello = h < 12 ? 'सुप्रभात सर' : h < 17 ? 'नमस्कार सर' : 'शुभ संध्या सर';
+  const parts = [hello + '। अभी ' + timeWords(d) + ' हुए हैं, आज ' + dateWords(d) + ' है।'];
+  try { parts.push(await getWeather('')); } catch(e) { log('weather: ' + e.message); }
+  try {
+    const ev = await A.todayEvents();
+    if (ev.granted) {
+      if (ev.events.length) {
+        parts.push('आज आपके ' + ev.events.length + ' कार्यक्रम हैं।');
+        ev.events.slice(0, 3).forEach(x => parts.push((x.allDay ? 'दिन भर' : timeWords(new Date(x.begin))) + ' ' + x.title + '।'));
+      } else parts.push('आज कैलेंडर में कोई कार्यक्रम नहीं है।');
+    }
+  } catch(e) {}
+  try { const b = await A.battery(); parts.push('बैटरी ' + b.percent + ' प्रतिशत है।'); } catch(e) {}
+  return parts.join(' ');
+}
+
+// ---------- contacts ----------
+async function resolveContact(name){
+  let list = window._contacts;
+  if (!list) {
+    const r = await A.getContacts();
+    if (!r.granted) throw new Error('पहले ऐप में Permissions दो (कॉन्टैक्ट)');
+    list = window._contacts = r.contacts;
+  }
+  const t = (name || '').toLowerCase();
+  const hit = list.find(c => c.name.toLowerCase() === t) || list.find(c => c.name.toLowerCase().includes(t));
+  if (!hit) throw new Error('कॉन्टैक्ट नहीं मिला: ' + name);
+  return hit;
+}
+function cleanNumber(n){
+  let d = (n || '').replace(/\D/g, '');
+  if (d.length === 11 && d[0] === '0') d = d.slice(1);
+  if (d.length === 10) d = '91' + d;
+  return d;
+}
+async function numberFor(c){
+  if (c.phone && c.phone.replace(/\D/g, '').length >= 7) return cleanNumber(c.phone);
+  if (c.contact) return cleanNumber((await resolveContact(c.contact)).number);
+  return '';
+}
+
+// ---------- notes ----------
+function getNotes(){ try { return JSON.parse(localStorage.getItem('notes') || '[]'); } catch(e) { return []; } }
+function saveNotes(n){ try { localStorage.setItem('notes', JSON.stringify(n.slice(-50))); } catch(e) {} }
+
+// ---------- FAST PATH (no AI, instant) ----------
 const APP_ALIAS = {
   'व्हाट्सएप':['whatsapp'],'व्हाट्सऐप':['whatsapp'],'व्हाट्सअप':['whatsapp'],'वॉट्सऐप':['whatsapp'],'वाट्सएप':['whatsapp'],'whatsapp':['whatsapp'],
   'यूट्यूब':['youtube'],'यू ट्यूब':['youtube'],'कैमरा':['camera'],'गैलरी':['gallery'],'सेटिंग':['settings'],'कैलकुलेटर':['calculator'],
@@ -172,8 +260,8 @@ const APP_ALIAS = {
 };
 const SEARCH_WORDS = /सर्च|search|खोज|ढूंढ|ढूँढ/i;
 const DROP = new Set(['यूट्यूब','यू','ट्यूब','youtube','गूगल','google','पर','पे','में','मे','से','खोलकर','खोलके','खोल','खोलो','ओपन','open','सर्च','search','करो','कर','करना','करके','दो','दीजिए','ये','इसको','इसे','जाके','जाकर','जाओ','जा','और','फिर','ढूंढो','ढूँढो','खोजो','खोज','to','go','on','in','for','the','please','प्लीज']);
-
-function norm(t){ return t.toLowerCase().replace(/[.,?!।]/g, ' ').replace(/\s+/g, ' ').trim(); }
+const NOTE_DROP = new Set(['नोट','नोट्स','कर','करो','करना','लो','दो','कि','की','याद','रखो','रख','note','please','प्लीज','मेरे','मेरा','लिख','लिखो','लिखना','में','ये','यह']);
+const MUSIC_DROP = new Set(['गाना','गाने','song','songs','music','म्यूजिक','म्यूज़िक','चलाओ','चला','बजाओ','बजा','play','सुनाओ','सुना','लगाओ','लगा','करो','दो','मेरे','मेरा','का','की','के','को','एक','कोई','प्लीज','please','पर','में','मुझे','मुझको','वाला','वाली','से','सुनना','है','हैं']);
 
 function findApp(t, apps){
   const pick = (needle) => apps.find(a => a.name.toLowerCase() === needle) || apps.find(a => a.name.toLowerCase().includes(needle));
@@ -190,20 +278,83 @@ function findApp(t, apps){
 
 async function fastPath(raw){
   const t = norm(raw);
+  const has = re => re.test(t);
+  const toks = t.split(' ').filter(Boolean);
   const apps = (await A.getApps()).apps;
   window._apps = apps;
 
   // 1) Search on YouTube / Google
-  const yt = /यूट्यूब|यू ट्यूब|youtube/.test(t);
-  const gg = /गूगल|google/.test(t);
+  const yt = has(/यूट्यूब|यू ट्यूब|youtube/), gg = has(/गूगल|google/);
   if ((yt || gg) && SEARCH_WORDS.test(t)) {
-    let toks = t.split(' ').filter(w => w && !DROP.has(w));
-    while (toks.length && ['को', 'का', 'की', 'के'].includes(toks[toks.length - 1])) toks.pop();
-    const q = toks.join(' ').trim();
+    let w = toks.filter(x => !DROP.has(x));
+    while (w.length && ['को', 'का', 'की', 'के'].includes(w[w.length - 1])) w.pop();
+    const q = w.join(' ').trim();
     if (q) return { action: 'search', target: yt ? 'youtube' : 'google', query: q, reply: 'खोज रहा हूँ' };
   }
 
-  // 2) Alarm
+  // 2) Torch
+  if (has(/टॉर्च|टार्च|torch|flashlight|फ्लैशलाइट|फ्लैश लाइट/)) {
+    const c = { action: 'torch', reply: 'टॉर्च' };
+    if (has(/बंद|off|बुझा|ऑफ/)) c.on = false; else if (has(/चालू|on|जला|ऑन|खोल|चला/)) c.on = true;
+    return c;
+  }
+
+  // 3) Volume
+  if (has(/आवाज़|आवाज|वॉल्यूम|वाल्यूम|volume|साउंड/)) {
+    const n = t.match(/(\d{1,3})/);
+    const c = { action: 'volume', reply: 'आवाज़' };
+    if (has(/म्यूट|mute|बंद|शांत/)) c.mode = 'mute';
+    else if (n) { c.mode = 'set'; c.percent = Math.min(100, +n[1]); }
+    else if (has(/फुल|full|मैक्सिमम|पूरी|सबसे ज़्यादा|सबसे ज्यादा/)) c.mode = 'max';
+    else if (has(/घटा|कम|धीमी|धीरे|down|low|हल्की/)) c.mode = 'down';
+    else c.mode = 'up';
+    return c;
+  }
+
+  // 4) Brightness
+  if (has(/ब्राइटनेस|brightness|स्क्रीन की रोशनी|चमक/)) {
+    const n = t.match(/(\d{1,3})/);
+    const c = { action: 'brightness', reply: 'ब्राइटनेस' };
+    if (n) c.percent = Math.min(100, +n[1]);
+    else c.delta = has(/घटा|कम|down|low|धीमी|हल्की/) ? -25 : 25;
+    return c;
+  }
+
+  // 5) Battery / time / date
+  if (has(/बैटरी|battery/)) return { action: 'battery', reply: 'बैटरी' };
+  if (has(/समय क्या|टाइम क्या|कितने बजे|क्या टाइम|क्या समय|what time|समय बताओ|टाइम बताओ/)) return { action: 'time', reply: 'समय' };
+  if (has(/तारीख|कौन सा दिन|कौन सी तारीख|आज की डेट|क्या डेट|what.*date/)) return { action: 'date', reply: 'तारीख' };
+
+  // 6) Briefing / weather
+  if (has(/गुड मॉर्निंग|good morning|ब्रीफिंग|briefing|सुप्रभात|शुभ प्रभात/)) return { action: 'briefing', reply: 'ब्रीफिंग' };
+  if (has(/मौसम|weather/)) {
+    let city = '';
+    const m = t.match(/(\S+)\s+(?:का|की|में)\s+(?:आज\s+(?:का\s+)?)?(?:मौसम|weather)/) || t.match(/weather (?:in|of|at) (\S+)/);
+    if (m && !['आज', 'अभी', 'यहाँ', 'यहां', 'का', 'की'].includes(m[1])) city = m[1];
+    return { action: 'weather', city, reply: 'मौसम' };
+  }
+
+  // 7) Notes
+  if (has(/नोट.*(मिटा|डिलीट|हटा|साफ|delete|clear)/)) return { action: 'notes_clear', reply: 'नोट' };
+  if (has(/(क्या नोट|नोट्स|मेरे नोट|नोट सुना|नोट पढ़|नोट बता|नोट दिखा|read.*notes?)/)) return { action: 'notes_read', reply: 'नोट' };
+  if (toks.some(x => ['नोट', 'note'].includes(x)) || has(/याद रख/)) {
+    const w = toks.slice();
+    while (w.length && NOTE_DROP.has(w[0])) w.shift();
+    const text = w.join(' ').trim();
+    if (text) return { action: 'notes_add', text, reply: 'नोट' };
+  }
+
+  // 8) Timer
+  if (has(/टाइमर|timer/)) {
+    const m = t.match(/(\d+)\s*(सेकंड|सेकेंड|second|sec|मिनट|minute|min|घंटे|घंटा|hour|hr)/);
+    if (m) {
+      const n = +m[1], u = m[2];
+      const seconds = /सेक|sec/.test(u) ? n : /मिनट|min/.test(u) ? n * 60 : n * 3600;
+      return { action: 'timer', seconds, reply: 'टाइमर' };
+    }
+  }
+
+  // 9) Alarm
   if (/अलार्म|alarm/.test(t)) {
     const m = t.match(/(\d{1,2})(?:\s*[:.]\s*(\d{2}))?/);
     if (m) {
@@ -217,21 +368,31 @@ async function fastPath(raw){
     }
   }
 
-  // 3) Open an app
-  if (/खोल|ओपन|open|चला|चालू|start|launch|लॉन्च|शुरू/.test(t)) {
+  // 10) Music
+  if (has(/गाना|गाने|song|music|म्यूजिक|म्यूज़िक/) && has(/चला|बजा|play|सुना|लगा/)) {
+    const q = toks.filter(x => !MUSIC_DROP.has(x)).join(' ').trim();
+    return { action: 'music', query: q || 'popular hits', reply: 'गाना' };
+  }
+
+  // 11) Wi-Fi / Bluetooth settings
+  if (has(/वाईफाई|वाई फाई|वाई-फाई|वाईफ़ाई|wifi|wi fi|ब्लूटूथ|bluetooth/) && has(/खोल|चालू|बंद|on|off|ऑन|ऑफ|सेटिंग/)) {
+    return { action: 'settings', which: has(/ब्लूटूथ|bluetooth/) ? 'bluetooth' : 'wifi', reply: 'सेटिंग्स' };
+  }
+
+  // 12) Open an app
+  if (has(/खोल|ओपन|open|चला|चालू|start|launch|लॉन्च|शुरू/)) {
     const hit = findApp(t, apps);
     if (hit) return { action: 'open_app', app: hit.name, reply: hit.name + ' खुल रहा है' };
   }
   return null;
 }
 
-
+// ---------- greeting ----------
 const GREET = 'हाय सर, मैं जार्विस हूँ। बताइए, मैं आपकी क्या मदद कर सकता हूँ?';
-let greeted = false;
 const GREET_WORDS = new Set(['हाय','हाई','हेलो','हैलो','हलो','हे','हेय','नमस्ते','नमस्कार','जार्विस','जारविस','जरविस','जार्विश','जर्विस','सुनो','सुनिए','hi','hello','hey','jarvis','ok','ओके']);
 function isGreeting(t){
-  const toks = norm(t).split(' ').filter(Boolean);
-  return toks.length > 0 && toks.length <= 3 && toks.every(w => GREET_WORDS.has(w));
+  const w = norm(t).split(' ').filter(Boolean);
+  return w.length > 0 && w.length <= 3 && w.every(x => GREET_WORDS.has(x));
 }
 async function greetAndListen(){
   greeted = true; turns++;
@@ -239,6 +400,7 @@ async function greetAndListen(){
   if (turns < 6) { await sleep(200); startListen(); } else closeSoon(300);
 }
 
+// ---------- main flow ----------
 async function finish(){
   clearTimeout(timer);
   if (!last) {
@@ -248,13 +410,14 @@ async function finish(){
   if (isGreeting(last)) { await greetAndListen(); return; }
   try {
     status('समझ रहा हूँ...');
-    const fast = await fastPath(last);
-    if (fast) { log('fast: ' + JSON.stringify(fast)); await run(fast); status(fast.reply + ' ✓'); closeSoon(500); return; }
-    const cmd = await withTimeout(ask(last));
-    log(JSON.stringify(cmd));
+    let cmd = await fastPath(last), viaAI = false;
+    if (cmd) log('fast: ' + JSON.stringify(cmd));
+    else { cmd = await withTimeout(ask(last)); viaAI = true; log(JSON.stringify(cmd)); }
     const reply = cmd.reply || 'ठीक है सर।';
-    history.push({ role: 'user', text: last }, { role: 'assistant', text: reply });
-    history = history.slice(-8);
+    if (viaAI) {
+      history.push({ role: 'user', text: last }, { role: 'assistant', text: reply });
+      history = history.slice(-8);
+    }
     turns++;
 
     if (cmd.action === 'chat' || cmd.action === 'unknown') {
@@ -263,16 +426,116 @@ async function finish(){
       return;
     }
     if (cmd.action === 'close') { await say(reply); closeSoon(200); return; }
+    if (cmd.action === 'translate') { await say(cmd.text || reply, cmd.lang || 'en-US'); closeSoon(400); return; }
 
-    await run(cmd);
-    status(reply);
-    closeSoon(700);
+    const res = await exec(cmd);
+    if (res && res.say) { await say(res.say, res.lang); closeSoon(300); }
+    else { status(reply + ' ✓'); closeSoon(600); }
   } catch(e) {
     status('Error: ' + (e.message || e));
     closeSoon(3500);
   }
 }
 
+// ---------- execute actions ----------
+async function exec(c){
+  switch (c.action) {
+    case 'search': {
+      const url = c.target === 'youtube' ? 'https://www.youtube.com/results?search_query=' + enc(c.query || '') : 'https://www.google.com/search?q=' + enc(c.query || '');
+      await A.openUrl({ url }); return null;
+    }
+    case 'open_app': {
+      const want = (c.app || '').toLowerCase(), apps = window._apps || [];
+      const hit = apps.find(a => a.name.toLowerCase() === want) || apps.find(a => want && a.name.toLowerCase().includes(want));
+      if (!hit) throw new Error('ऐप नहीं मिला: ' + c.app);
+      await A.openApp({ pkg: hit.pkg }); return null;
+    }
+    case 'alarm':
+      await A.setAlarm({ hour: c.hour, minute: c.minute || 0, label: c.label || 'Jarvis' }); return null;
+    case 'timer':
+      await A.setTimer({ seconds: c.seconds, label: 'Jarvis' }); return null;
+    case 'whatsapp': {
+      const num = await numberFor(c);
+      await A.openUrl({ url: (num ? 'https://wa.me/' + num : 'https://wa.me/') + '?text=' + enc(c.text || '') });
+      return null;
+    }
+    case 'call': {
+      let number = '';
+      if (c.phone && c.phone.replace(/\D/g, '').length >= 3) number = c.phone;
+      else if (c.contact) number = (await resolveContact(c.contact)).number;
+      else throw new Error('किसे कॉल करना है?');
+      await A.call({ number }); return null;
+    }
+    case 'torch': {
+      const r = c.on === undefined ? await A.torch({}) : await A.torch({ on: c.on });
+      status('टॉर्च ' + (r.on ? 'चालू' : 'बंद')); return null;
+    }
+    case 'volume': {
+      const r = await A.volume({ mode: c.mode, percent: c.percent });
+      status('आवाज़ ' + r.percent + '%'); return null;
+    }
+    case 'brightness': {
+      const r = await A.brightness(c.percent !== undefined ? { percent: c.percent } : { delta: c.delta || 25 });
+      if (r.needsPermission) return { say: 'सर, सेटिंग खुल गई है। Jarvis को सिस्टम सेटिंग बदलने की अनुमति दे दीजिए।' };
+      status('ब्राइटनेस ' + r.percent + '%'); return null;
+    }
+    case 'battery': {
+      const b = await A.battery();
+      return { say: 'बैटरी ' + b.percent + ' प्रतिशत है' + (b.charging ? ', और चार्ज हो रही है।' : '।') };
+    }
+    case 'time': return { say: 'सर, अभी ' + timeWords(new Date()) + ' हुए हैं।' };
+    case 'date': return { say: 'आज ' + dateWords(new Date()) + ' है।' };
+    case 'weather': return { say: await getWeather(c.city) };
+    case 'briefing': return { say: await briefing() };
+    case 'notes_add': {
+      const n = getNotes(); n.push({ t: c.text, d: Date.now() }); saveNotes(n);
+      return { say: 'ठीक है सर, नोट कर लिया।' };
+    }
+    case 'notes_read': {
+      const n = getNotes();
+      if (!n.length) return { say: 'सर, अभी कोई नोट नहीं है।' };
+      const recent = n.slice(-5).reverse();
+      return { say: 'आपके ' + n.length + ' नोट हैं। ' + recent.map((x, i) => (i + 1) + '. ' + x.t).join('। ') + '।' };
+    }
+    case 'notes_clear': saveNotes([]); return { say: 'सारे नोट मिटा दिए सर।' };
+    case 'music': {
+      const q = c.query || 'popular hits', apps = window._apps || [];
+      if (apps.find(a => /spotify/i.test(a.name))) await A.openUrl({ url: 'spotify:search:' + enc(q) });
+      else if (apps.find(a => /youtube music/i.test(a.name))) await A.openUrl({ url: 'https://music.youtube.com/search?q=' + enc(q) });
+      else await A.openUrl({ url: 'https://www.youtube.com/results?search_query=' + enc(q + ' song') });
+      return null;
+    }
+    case 'navigate': {
+      let place = c.place || '';
+      if (/^(home|घर)$/i.test(place.trim()) || /घर|home/i.test(place) && place.length < 12) {
+        place = localStorage.getItem('home');
+        if (!place) throw new Error('पहले ऐप में घर का पता save करो');
+      }
+      if (!place) throw new Error('कहाँ जाना है?');
+      await A.openUrl({ url: 'google.navigation:q=' + enc(place) + '&mode=d' }); return null;
+    }
+    case 'settings': await A.openSettings({ which: c.which }); return null;
+    case 'reminder': {
+      const now = new Date(); let when = new Date(now);
+      if (c.in_min) when = new Date(now.getTime() + c.in_min * 60000);
+      else {
+        when.setSeconds(0, 0); when.setHours(c.hour, c.minute || 0);
+        if (c.day) when.setDate(when.getDate() + c.day); else if (when <= now) when.setDate(when.getDate() + 1);
+      }
+      let url = '', body = c.text || 'याद दिलाना';
+      if (c.contact || c.phone) {
+        const num = await numberFor(c);
+        url = 'https://wa.me/' + num + '?text=' + enc(c.text || '');
+        body = 'टैप करें — ' + (c.contact || num) + ' को मैसेज भेजना है';
+      }
+      await A.scheduleReminder({ time: when.getTime(), title: 'Jarvis याद दिलाता है', body, url });
+      return { say: 'ठीक है सर, ' + (when.toDateString() === now.toDateString() ? '' : 'कल ') + timeWords(when) + ' पर याद दिलाऊँगा।' };
+    }
+  }
+  return null;
+}
+
+// ---------- AI providers ----------
 async function openaiChat(url, key, models, sys, hist, text, extra){
   let lastErr = '';
   for (const model of models) {
@@ -292,14 +555,8 @@ async function openaiChat(url, key, models, sys, hist, text, extra){
 }
 
 async function callProvider(prov, key, sys, hist, text){
-  if (prov === 'groq') {
-    return openaiChat('https://api.groq.com/openai/v1/chat/completions', key,
-      ['openai/gpt-oss-120b', 'openai/gpt-oss-20b'], sys, hist, text, { reasoning_effort: 'low' });
-  }
-  if (prov === 'mistral') {
-    return openaiChat('https://api.mistral.ai/v1/chat/completions', key,
-      ['mistral-small-latest'], sys, hist, text, { response_format: { type: 'json_object' } });
-  }
+  if (prov === 'groq') return openaiChat('https://api.groq.com/openai/v1/chat/completions', key, ['openai/gpt-oss-120b', 'openai/gpt-oss-20b'], sys, hist, text, { reasoning_effort: 'low' });
+  if (prov === 'mistral') return openaiChat('https://api.mistral.ai/v1/chat/completions', key, ['mistral-small-latest'], sys, hist, text, { response_format: { type: 'json_object' } });
   if (prov === 'gemini') {
     let lastErr = '';
     for (const model of ['gemini-2.5-flash', 'gemini-flash-latest']) {
@@ -329,18 +586,23 @@ async function callProvider(prov, key, sys, hist, text){
 
 async function ask(text){
   const sel = localStorage.getItem('prov') || 'groq';
-  const order = [sel, ...['groq', 'mistral', 'gemini', 'claude'].filter(p => p !== sel)]
-    .filter(p => localStorage.getItem('key_' + p));
+  const order = [sel, ...['groq', 'mistral', 'gemini', 'claude'].filter(p => p !== sel)].filter(p => localStorage.getItem('key_' + p));
   if (!order.length) throw new Error('पहले API key save करो');
 
-  const apps = (await A.getApps()).apps;
-  window._apps = apps;
+  const apps = window._apps || (await A.getApps()).apps;
   const wantsApp = /खोल|ओपन|open|चला|चालू|start|launch|लॉन्च|शुरू/i.test(text);
   const names = wantsApp ? [...new Set(apps.map(a => a.name))].join(', ') : '';
-  const sys = `You are JARVIS, a polite witty AI butler on the user's Android phone. User speaks Hindi/Hinglish/English, any word order. Reply with ONE JSON object only:
-{"action":"chat|search|open_app|alarm|whatsapp|close|unknown","target":"google|youtube","query":"","app":"","hour":0,"minute":0,"phone":"","text":"","reply":""}
+  let cnames = '';
+  if (/कॉल|call|फोन|phone|मैसेज|message|व्हाट्सएप|व्हाट्सऐप|व्हाट्सअप|whatsapp|भेज|मिला|रिमाइंड|याद दिला|remind/i.test(text)) {
+    try {
+      const cr = await A.getContacts();
+      if (cr.granted) { window._contacts = cr.contacts; cnames = cr.contacts.slice(0, 200).map(x => x.name).join(', '); }
+    } catch(e) {}
+  }
+  const sys = `You are JARVIS, a polite witty AI butler on the user's Android phone. User speaks Hindi/Hinglish/English, any word order. Now: ${new Date().toString().slice(0, 21)}. Reply with ONE JSON object only:
+{"action":"chat|search|open_app|alarm|whatsapp|call|reminder|navigate|translate|close|unknown","target":"google|youtube","query":"","app":"","hour":0,"minute":0,"day":0,"in_min":0,"contact":"","phone":"","text":"","place":"","lang":"","reply":""}
 reply: spoken aloud, Hindi (Devanagari), max 2 short sentences, no emoji/markdown, call the user "सर".
-chat = talk/questions (answer in reply; if the user only says hi, reply exactly "हाय सर, मैं जार्विस हूँ। बताइए, मैं आपकी क्या मदद कर सकता हूँ?"). search = target youtube if YouTube is mentioned else google, query = only the search words. open_app = app name copied exactly from this list: ${names}. alarm = hour in 24h (subah 5 = 5, shaam 5 = 17). whatsapp = phone digits, text = the message. close = bas/bye. unknown = politely ask to repeat.`;
+chat = talk/questions (answer in reply; if the user only says hi, reply exactly "हाय सर, मैं जार्विस हूँ। बताइए, मैं आपकी क्या मदद कर सकता हूँ?"). search = target youtube if YouTube is mentioned else google, query = only the search words. open_app = app name copied exactly from this list: ${names}. alarm = hour in 24h (subah 5 = 5, shaam 5 = 17). whatsapp = contact (name copied exactly from the contacts list) or phone digits, text = the message. call = contact (exact from list) or phone. reminder = remind later: hour/minute in 24h with day 0 today/1 tomorrow, or in_min for "N minutes later"; text = what to remind; if it is about sending a message to someone also give contact/phone. navigate = place = destination ("home" for the user's home). translate = text = ONLY the translation, lang = BCP-47 of the target language (en-US, es-ES, fr-FR, ja-JP, de-DE, ar-SA...), reply = same translation. close = bas/bye. unknown = politely ask to repeat.${cnames ? '\nContacts: ' + cnames : ''}`;
 
   const hist = history.slice(-2);
   const errs = [];
@@ -356,33 +618,6 @@ chat = talk/questions (answer in reply; if the user only says hi, reply exactly 
     }
   }
   throw new Error(errs.join(' | ').slice(0, 220));
-}
-
-async function run(c){
-  const enc = encodeURIComponent;
-  if (c.action === 'search') {
-    const url = c.target === 'youtube'
-      ? 'https://www.youtube.com/results?search_query=' + enc(c.query || '')
-      : 'https://www.google.com/search?q=' + enc(c.query || '');
-    log((c.target === 'youtube' ? 'YouTube' : 'Google') + ' पर: ' + c.query);
-    await A.openUrl({ url });
-  } else if (c.action === 'open_app') {
-    const want = (c.app || '').toLowerCase();
-    const apps = window._apps || [];
-    const hit = apps.find(a => a.name.toLowerCase() === want) || apps.find(a => want && a.name.toLowerCase().includes(want));
-    if (!hit) throw new Error('ऐप नहीं मिला: ' + c.app);
-    log('खोल रहा हूँ: ' + hit.name);
-    await A.openApp({ pkg: hit.pkg });
-  } else if (c.action === 'alarm') {
-    log('अलार्म: ' + c.hour + ':' + String(c.minute || 0).padStart(2, '0'));
-    await A.setAlarm({ hour: c.hour, minute: c.minute || 0, label: c.label || 'Jarvis' });
-  } else if (c.action === 'whatsapp') {
-    let ph = (c.phone || '').replace(/\D/g, '');
-    if (ph.length === 10) ph = '91' + ph;
-    const url = ph ? 'https://wa.me/' + ph + '?text=' + enc(c.text || '') : 'https://wa.me/?text=' + enc(c.text || '');
-    log('WhatsApp खुल रहा है — बस Send दबाओ');
-    await A.openUrl({ url });
-  }
 }
 
 // logo: www/logo.png मिले तो गोल बटन पर वही दिखेगा
